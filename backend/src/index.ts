@@ -30,15 +30,13 @@ app.post(
     const destinationLocationName = req.body.destination?.address;
 
     if (!pickupLocationName || !destinationLocationName) {
-      return res
-        .status(400)
-        .json({ error: "Pickup and destination names are required" });
+      return res.status(400).json({ error: "Pickup and destination names are required" });
     }
 
     let browser;
     try {
       browser = await puppeteer.launch({
-        headless: false,
+        headless: true,
         args: ["--no-sandbox", "--disable-setuid-sandbox"],
         defaultViewport: null,
       });
@@ -48,64 +46,37 @@ app.post(
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115 Safari/537.36"
       );
 
-      console.log("Opening Rapido...");
-      await page.goto("https://www.rapido.bike", { waitUntil: "networkidle2" });
+      const rapidoURL = `https://m.rapido.bike/unup-home/seo/${encodeURIComponent(
+        pickupLocationName
+      )}/${encodeURIComponent(destinationLocationName)}?version=v3`;
 
-      // Pickup
-      await page.waitForSelector("input[placeholder='Enter Pickup Location']");
-      await page.click("input[placeholder='Enter Pickup Location']");
-      await page.type("input[placeholder='Enter Pickup Location']", pickupLocationName, { delay: 100 });
-      await new Promise(res => setTimeout(res, 2000));
-      const pickupSuggestion = (await page.$$(".dropdown-item"))[0];
-      if (pickupSuggestion) await pickupSuggestion.click();
+      console.log("Opening Rapido URL:", rapidoURL);
+      await page.goto(rapidoURL, { waitUntil: "networkidle0" });
 
-      // Drop
-      await page.waitForSelector("input[placeholder='Enter Drop Location']");
-      await page.click("input[placeholder='Enter Drop Location']");
-      await page.type("input[placeholder='Enter Drop Location']", destinationLocationName, { delay: 100 });
-      await new Promise(res => setTimeout(res, 2000));
-      const dropSuggestion = (await page.$$(".dropdown-item"))[0];
-      if (dropSuggestion) await dropSuggestion.click();
+      await page.waitForSelector(".card-wrap", { timeout: 8000 });
 
-      // Book ride
-      await page.waitForSelector('button[aria-label="book-ride"]');
-      await page.click('button[aria-label="book-ride"]');
-      await new Promise(res => setTimeout(res, 5000)); 
+      const rides = await page.evaluate(() => {
+        const rideElements = document.querySelectorAll(".card-wrap");
+        return Array.from(rideElements).map((card) => {
+          const type = card.querySelector(".card-content")?.textContent?.trim() || "Unknown";
+          const price =
+            Array.from(card.querySelectorAll("div"))
+              .map((el) => el.textContent?.trim())
+              .filter((text) => text?.includes("₹"))
+              .pop() || "N/A";
+          return { type, price };
+        });
+      });
 
-      // Scrape results
-      await page.waitForSelector(".card-wrap", { timeout: 60000 });
-const rides = await page.evaluate(() => {
-  const rideElements = document.querySelectorAll(".card-wrap");
-  return Array.from(rideElements).map((card) => {
-    const type =
-      card.querySelector(".card-content")?.textContent?.trim() || "Unknown";
-
-    const price = Array.from(card.querySelectorAll("div"))
-      .map((el) => el.textContent?.trim())
-      .filter((text) => text?.includes("₹"))
-      .pop() || "N/A";
-
-    return { type, price };
-  });
-});
-
+      await browser.close();
       console.log("Rides found:", rides);
-
-
-      // await browser.close();
-
       res.json({ success: true, rides });
     } catch (error) {
       console.error("Puppeteer error:", error);
-      if (browser) {
-        await browser.close();
-      }
-      
+      if (browser) await browser.close();
       res.status(500).json({ success: false, error: "Failed to get Rapido estimates" });
     }
   }
 );
 
-app.listen(3000, () =>
-  console.log("Server running on http://localhost:3000")
-);
+app.listen(3000, () => console.log("Server running on http://localhost:3000"));
